@@ -130,6 +130,12 @@ python3 -m unittest discover -s tests -v   # 11 passed
 - 许可证：两上游均为 **GPL-3.0-only**，融合代码同样 GPL-3.0-only，
   见 `LICENSE`；分发时附许可证与源码获取方式。
 
+## 致谢
+
+- 感谢 [aur3l14no/accessory-location](https://github.com/aur3l14no/accessory-location)：本项目复用了它的 USB 引擎与 iAP2 协议实现（`app/iap2/` 的 link/wire/auth、MFi-v3 helper 子进程设计），USB 这条路才有现成实现可用。
+- 感谢 [D1ngtalk/iap2loc](https://github.com/D1ngtalk/iap2loc)：本项目的 Web 控制台与目标模型（地图选点、共享目标、随机偏移与跳变处理）源自它的设计与实现。
+- 感谢 [LINUX DO 社区](https://linux.do/)：两个上游项目的交流与分享让这个融合有了起点。
+
 ## 已知限制
 
 - USB 是 macOS 优先：`pymobiledevice3` + usbmux 在 macOS 上最成熟；
