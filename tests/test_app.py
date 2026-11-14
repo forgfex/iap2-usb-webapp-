@@ -148,6 +148,61 @@ class TestListUsbDevices(unittest.TestCase):
         self.assertIn("usbmux list failed", error)
 
 
+class TestOpenUsbStream(unittest.TestCase):
+    """Regression: open_usb_stream passed udid= to
+    create_using_usbmux, which has no such keyword -- adding a
+    device failed with "got an unexpected keyword argument 'udid'".
+    The UDID goes in as serial=."""
+
+    def _patch_create(self, seen):
+        class FakeService:
+            async def recvall(self, n):
+                return b"\x00" * n
+
+            async def sendall(self, data):
+                pass
+
+            async def close(self):
+                pass
+
+        class FakePhone:
+            async def start_lockdown_service(self, name):
+                self.service_name = name
+                return FakeService()
+
+        async def fake_create(**kwargs):
+            seen.update(kwargs)
+            return FakePhone()
+
+        lockdown = types.ModuleType("pymobiledevice3.lockdown")
+        lockdown.create_using_usbmux = fake_create
+        pkg = types.ModuleType("pymobiledevice3")
+        pkg.lockdown = lockdown
+        return unittest.mock.patch.dict(
+            sys.modules,
+            {"pymobiledevice3": pkg, "pymobiledevice3.lockdown": lockdown})
+
+    def test_udid_passed_as_serial(self):
+        from app.transport import open_usb_stream
+
+        seen = {}
+        with self._patch_create(seen):
+            phone, stream = asyncio.run(open_usb_stream("00008120-001234567890ABCD"))
+        self.assertEqual(seen.get("serial"), "00008120-001234567890ABCD")
+        self.assertNotIn("udid", seen)
+        self.assertEqual(seen.get("connection_type"), "USB")
+        self.assertIsNotNone(stream)
+
+    def test_no_udid_connects_first_device(self):
+        from app.transport import open_usb_stream
+
+        seen = {}
+        with self._patch_create(seen):
+            asyncio.run(open_usb_stream(None))
+        self.assertNotIn("serial", seen)
+        self.assertNotIn("udid", seen)
+
+
 class TestWeb(unittest.TestCase):
     def test_api(self):
         import tempfile

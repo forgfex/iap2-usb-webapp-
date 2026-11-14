@@ -147,12 +147,31 @@ async def open_usb_stream(udid=None):
     Mirrors accessory-location cli.py: create_using_usbmux(USB) +
     start_lockdown_service("com.apple.carkit.service"). The phone must
     be unlocked and already trust this Mac.
+
+    Device selection uses ``serial=`` -- pymobiledevice3's
+    ``create_using_usbmux`` takes the UDID as ``serial`` (for USB,
+    serial == UDID); it has no ``udid`` keyword, so passing
+    ``udid=`` failed with ``got an unexpected keyword argument
+    'udid'``. The parameter name is checked against the installed
+    function's signature so older/newer versions that name it
+    differently still work.
     """
     from pymobiledevice3.lockdown import create_using_usbmux
 
     kwargs = {"connection_type": "USB", "autopair": False}
     if udid:
-        kwargs["udid"] = udid
+        try:
+            params = inspect.signature(create_using_usbmux).parameters
+        except (TypeError, ValueError):
+            params = {}
+        if "serial" in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in params.values()):
+            kwargs["serial"] = udid
+        elif "udid" in params:
+            kwargs["udid"] = udid
+        # else: no device selector in this version; connect to the
+        # first (only) USB device, as accessory-location does.
     phone = await create_using_usbmux(**kwargs)
     service = await phone.start_lockdown_service("com.apple.carkit.service")
     return phone, UsbStream(service)
