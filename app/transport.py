@@ -18,6 +18,8 @@ needed on a Mac with a phone attached, so `python -m app.main serve`
 works on any machine with stdlib only.
 """
 import asyncio
+import inspect
+import threading
 
 
 class TcpStream:
@@ -80,6 +82,39 @@ class UsbStream:
             await result
 
 
+def _await_maybe(result):
+    """Await a value if it is a coroutine, otherwise return it as-is.
+
+    pymobiledevice3's ``usbmux.list_devices`` is async in current
+    versions (sync in older ones). Calling it without awaiting used
+    to return a coroutine object, which then failed with
+    ``TypeError: 'coroutine' object is not iterable`` in the caller
+    and left a "coroutine was never awaited" warning. The Web server
+    runs in a plain thread with no event loop, so ``asyncio.run``
+    is the normal path; if a loop is already running in this thread,
+    run the coroutine on a fresh thread instead.
+    """
+    if not inspect.iscoroutine(result):
+        return result
+    try:
+        return asyncio.run(result)
+    except RuntimeError:
+        box, err = {}, {}
+
+        def _target():
+            try:
+                box["value"] = asyncio.run(result)
+            except Exception as exc:  # noqa: BLE001 - re-raised below
+                err["error"] = exc
+
+        thread = threading.Thread(target=_target, daemon=True)
+        thread.start()
+        thread.join()
+        if err:
+            raise err["error"]
+        return box.get("value")
+
+
 def list_usb_devices():
     """Best-effort USB iPhone enumeration via pymobiledevice3/usbmux.
 
@@ -93,7 +128,7 @@ def list_usb_devices():
     except Exception as exc:  # pymobiledevice3 not installed (e.g. Linux CI)
         return [], f"pymobiledevice3 unavailable: {exc}"
     try:
-        devices = list_devices()
+        devices = _await_maybe(list_devices())
     except Exception as exc:
         return [], f"usbmux list failed: {exc}"
     out = []

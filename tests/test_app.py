@@ -10,7 +10,9 @@ import socket
 import struct
 import sys
 import threading
+import types
 import unittest
+import unittest.mock
 import urllib.request
 from pathlib import Path
 
@@ -94,6 +96,56 @@ class TestWire(unittest.TestCase):
         out = buf.feed(raw)
         self.assertEqual(out[0].identifier, 0xFFFB)
         self.assertEqual(parameters(out[0].body), [(0, b"abc"), (1, b"")])
+
+
+class TestListUsbDevices(unittest.TestCase):
+    """Regression: pymobiledevice3 list_devices is async in current
+    versions. Calling it sync used to return a coroutine, and
+    /api/devices then crashed with "TypeError: 'coroutine' object
+    is not iterable". Both sync and async implementations must work."""
+
+    def _patch_list_devices(self, fn):
+        usbmux = types.ModuleType("pymobiledevice3.usbmux")
+        usbmux.list_devices = fn
+        pkg = types.ModuleType("pymobiledevice3")
+        pkg.usbmux = usbmux
+        return unittest.mock.patch.dict(
+            sys.modules,
+            {"pymobiledevice3": pkg, "pymobiledevice3.usbmux": usbmux})
+
+    def test_async_list_devices(self):
+        from app.transport import list_usb_devices
+
+        async def fake():
+            return [{"udid": "00008110-001234567890ABCD"}]
+
+        with self._patch_list_devices(fake):
+            devices, error = list_usb_devices()
+        self.assertIsNone(error)
+        self.assertEqual(devices[0]["udid"],
+                         "00008110-001234567890ABCD")
+
+    def test_sync_list_devices(self):
+        from app.transport import list_usb_devices
+
+        def fake():
+            return [{"udid": "sync-udid"}]
+
+        with self._patch_list_devices(fake):
+            devices, error = list_usb_devices()
+        self.assertIsNone(error)
+        self.assertEqual(devices[0]["udid"], "sync-udid")
+
+    def test_async_list_devices_failure(self):
+        from app.transport import list_usb_devices
+
+        async def fake():
+            raise RuntimeError("usbmux down")
+
+        with self._patch_list_devices(fake):
+            devices, error = list_usb_devices()
+        self.assertEqual(devices, [])
+        self.assertIn("usbmux list failed", error)
 
 
 class TestWeb(unittest.TestCase):
