@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import sys
 
 from .wire import Message, ProtocolError, parameter
 
@@ -14,14 +15,45 @@ class AuthenticationProvider:
         self.executable = executable
         self.process = None
 
+    def _argv(self):
+        """Command used to launch the helper.
+
+        A ``.py`` helper is launched with the current interpreter
+        (``sys.executable``) instead of being executed directly.
+        Direct execution needs the +x bit, which a fresh ``git
+        clone`` does not guarantee -- the GitHub snapshot push that
+        created this repo stores files as 0644, so a cloned
+        ``tools/local_mfi_v3_helper.py`` failed with
+        ``[Errno 13] Permission denied`` even though the file itself
+        was fine. Running it via the interpreter makes the helper
+        work regardless of the file mode, and uses the same venv
+        interpreter (with cryptography installed) as the server.
+        """
+        if str(self.executable).endswith(".py"):
+            return [sys.executable, str(self.executable)]
+        return [str(self.executable)]
+
     async def request(self, operation, **fields):
         if self.process is None:
-            self.process = await asyncio.create_subprocess_exec(
-                self.executable,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                limit=128 * 1024,
-            )
+            try:
+                self.process = await asyncio.create_subprocess_exec(
+                    *self._argv(),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    limit=128 * 1024,
+                )
+            except PermissionError:
+                # Non-.py helper without +x (e.g. after a fresh clone):
+                # retry through the interpreter rather than failing the
+                # whole session.
+                if self._argv()[0] == sys.executable:
+                    raise
+                self.process = await asyncio.create_subprocess_exec(
+                    sys.executable, str(self.executable),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    limit=128 * 1024,
+                )
         self.process.stdin.write(json.dumps({"op": operation, **fields}).encode() + b"\n")
         await self.process.stdin.drain()
         response = await asyncio.wait_for(self.process.stdout.readline(), 40)

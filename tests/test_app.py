@@ -6,9 +6,11 @@ checks a real DeviceSession sends GGA/RMC for the shared target.
 """
 import asyncio
 import json
+import os
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import types
 import unittest
@@ -201,6 +203,46 @@ class TestOpenUsbStream(unittest.TestCase):
             asyncio.run(open_usb_stream(None))
         self.assertNotIn("serial", seen)
         self.assertNotIn("udid", seen)
+
+
+class TestAuthProvider(unittest.TestCase):
+    """Regression: a fresh git clone stores files as 0644, so
+    tools/local_mfi_v3_helper.py lost its +x bit and starting a
+    session failed with "[Errno 13] Permission denied". A .py
+    helper must be launched via the interpreter, not executed
+    directly, so it works regardless of the file mode."""
+
+    def test_py_helper_without_exec_bit(self):
+        from app.iap2.auth import AuthenticationProvider
+
+        helper = (
+            "#!/usr/bin/env python3\n"
+            "import sys, json, base64\n"
+            "for line in sys.stdin:\n"
+            "    req = json.loads(line)\n"
+            "    if req['op'] == 'certificate':\n"
+            "        print(json.dumps({'certificate': base64.b64encode(b'FAKECERT').decode(), 'type': 'mfi'}), flush=True)\n"
+            "    elif req['op'] == 'sign':\n"
+            "        print(json.dumps({'signature': base64.b64encode(b'FAKESIG').decode()}), flush=True)\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "fake_helper.py"
+            path.write_text(helper)
+            os.chmod(path, 0o644)
+            self.assertFalse(os.access(path, os.X_OK))
+            provider = AuthenticationProvider(str(path))
+
+            async def _run():
+                try:
+                    msg = await provider.certificate()
+                    sig = await provider.sign(b"challenge")
+                    return msg, sig
+                finally:
+                    await provider.close()
+
+            msg, sig = asyncio.run(_run())
+            self.assertEqual(msg.identifier, 0xAA01)
+            self.assertEqual(sig.identifier, 0xAA03)
 
 
 class TestWeb(unittest.TestCase):

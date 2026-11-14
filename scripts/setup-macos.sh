@@ -6,6 +6,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Fresh git clones store files as 0644, so the MFi helper loses its
+# +x bit; restore it (the code also runs .py helpers via the
+# interpreter, so this is belt-and-braces).
+chmod +x tools/local_mfi_v3_helper.py scripts/*.sh 2>/dev/null || true
+
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "这个脚本只在 macOS 上跑 (当前: $(uname -s))" >&2
   exit 2
